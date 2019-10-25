@@ -1,0 +1,17 @@
+<component name="ProjectDictionaryState">
+  <dictionary name="gordo">
+    <words>
+      <w>autograd</w>
+      <w>bchw</w>
+      <w>conv</w>
+      <w>convh</w>
+      <w>convw</w>
+      <w>cuda</w>
+      <w>hyperparameters</w>
+      <w>matplotlib</w>
+      <w>optim</w>
+      <w>pred</w>
+      <w>torchvision</w>
+    </words>
+  </dictionary>
+</component>
