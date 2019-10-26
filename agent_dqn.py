@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import os
+import sys
+import pickle
+
 import random
 import math
 import numpy as np
 from collections import deque, namedtuple
-import os
-import sys
-import torchvision.transforms as T
-from PIL import Image
 import cv2
 
 import torch
@@ -16,9 +16,8 @@ import torch.optim as optim
 
 from agent import Agent
 from dqn_model import DQN
-"""
-you can import any package and define any extra function as you need
-"""
+
+
 
 torch.manual_seed(595)
 np.random.seed(595)
@@ -41,49 +40,49 @@ class Agent_DQN(Agent):
             parameters for q-learning; decaying epsilon-greedy
             ...
         """
-        super(Agent_DQN,self).__init__(env)
+        super(Agent_DQN, self).__init__(env)
 
-        self.num_episodes = 100
+        self.num_episodes = 1000
         self.BATCH_SIZE = 128
         self.GAMMA = 0.999
         self.EPS_START = 1.0
         self.EPS_END = 0.05
         self.EPS_DECAY = 200
-        self.TARGET_UPDATE = 10
+        self.TARGET_UPDATE_STEPS = 10000
 
+        self.START_LEARNING = 5000
         self.replay_memory_size = 10000
         self.replay_memory = deque(maxlen=self.replay_memory_size)
         self.recent_screens = deque(maxlen=4)
 
         resized_dim = 84
-        self.history = 4
-        self.resize = T.Compose([T.ToPILImage(),
-                            T.Resize(resized_dim, interpolation=Image.CUBIC),
-                            T.ToTensor()])
+        self.num_screens = 4
 
         self.env = env
-        self.
-        state0 = self.env.step(0)
-        state0 = self.preprocess(state0)
-
-        # Get number of actions from gym action space
         self.n_actions = self.env.action_space.n
 
-        self.policy_net = DQN(resized_dim, resized_dim, self.history, self.n_actions).to(device)
-        self.target_net = DQN(resized_dim, resized_dim, self.history, self.n_actions).to(device)
+        self.policy_net = DQN(resized_dim, resized_dim, self.num_screens, self.n_actions).to(device)
+        self.target_net = DQN(resized_dim, resized_dim, self.num_screens, self.n_actions).to(device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
 
         self.optimizer = optim.RMSprop(self.policy_net.parameters())
 
         self.steps_done = 0
+        self.episode_rewards = []
 
+        self.num_episodes_per_report = 20
+        self.num_episodes_per_save = 500
+        self.save_path = "C:/Users/gordo/Desktop/saved_DQN"
+        if not os.path.exists(self.save_path):
+            os.makedirs(self.save_path)
 
         if args.test_dqn:
-            #you can load your model here
+            # you can load your model here
             print('loading trained model')
             ###########################
             # YOUR IMPLEMENTATION HERE #
+            self.policy_net.load_state_dict(torch.load(args.path))
             
 
     def init_game_setting(self):
@@ -92,9 +91,6 @@ class Agent_DQN(Agent):
         Put anything you want to initialize if necessary.
         If no parameters need to be initialized, you can leave it as blank.
         """
-        ###########################
-        # YOUR IMPLEMENTATION HERE #
-        ###########################
         pass
     
     
@@ -132,71 +128,88 @@ class Agent_DQN(Agent):
 
     def train(self):
         for i_episode in range(self.num_episodes):
-            # Initialize the environment and state
             self.env.reset()
-            state_init,_,_,_ = self.env.step(0)
-            state_init_p = self.preprocess_screen(state_init)
-            current_screen = get_screen()
-            state = current_screen - last_screen
-            for t in count():
+            # get initial screen
+            screen_init, _, _, _ = self.env.step(0)
+            screen_init = self.preprocess_screen(screen_init)
+            # prepare the initial state with 4 screen frames
+            screen_blank = screen_init - screen_init
+            self.recent_screens.extend([screen_blank] * 3)
+            self.recent_screens.append(screen_init)
+            # dim of state is (BCHW)
+            state = self.get_state_from(self.recent_screens)
+
+            done = False
+            episode_reward = 0
+
+            while not done:
                 # Select and perform an action
-                action = select_action(state)
-                state_next, reward, done, _ = env.step(action.item())
-                print(state_next.shape)
+                action = self.make_action(state)
+                screen_next, reward, done, _ = self.env.step(action.item())
+
                 reward = torch.tensor([reward], device=device)
+                episode_reward += reward
 
-                # Observe new state
-                last_screen = current_screen
-                current_screen = get_screen()
-                if not done:
-                    next_state = current_screen - last_screen
-                else:
+                screen_next = self.preprocess_screen(screen_next)
+                self.recent_screens.append(screen_next)
+
+                if done:
                     next_state = None
+                    self.episode_rewards.append(episode_reward)
+                else:
+                    next_state = self.get_state_from(self.recent_screens)
 
-                # Store the transition in memory
-                memory.push(state, action, next_state, reward)
-
-                # Move to the next state
+                self.push(state, action, next_state, reward)
                 state = next_state
 
-                # Perform one step of the optimization (on the target network)
-                optimize_model()
-                if done:
-                    episode_durations.append(t + 1)
-                    plot_durations()
-                    break
-            # Update the target network, copying all weights and biases in DQN
-            if i_episode % TARGET_UPDATE == 0:
-                target_net.load_state_dict(policy_net.state_dict())
+                # Perform one step of the optimization
+                if len(self.replay_memory) >= self.START_LEARNING:
+                    self.optimize_model()
 
-    def get_screen(self):
-        # Returned screen requested by gym is 400x600x3, but is sometimes larger
-        # such as 800x1200x3. Transpose it into torch order (CHW).
-        screen = self.env.render(mode='rgb_array').transpose((2, 0, 1))
-        # Convert to float, rescale, convert to torch tensor
-        screen = np.ascontiguousarray(screen, dtype=np.float32) / 255
-        screen = torch.from_numpy(screen)
-        # Resize, and add a batch dimension (BCHW)
-        return self.resize(screen).unsqueeze(0).to(device)
+                # Update the target network, copying all weights and biases in DQN
+                if self.steps_done % self.TARGET_UPDATE_STEPS == 0:
+                    self.target_net.load_state_dict(self.policy_net.state_dict())
+
+            if i_episode % self.num_episodes_per_report == 0:
+                val = (sum(self.episode_rewards)/len(self.episode_rewards)).item()
+                print(f'Average reward {val:.2f} of last {self.num_episodes_per_report} episodes. Last episode: {i_episode}')
+
+                with open(self.save_path + '/avg_rewards.txt', 'a') as reward_file:
+                    reward_file.write(f'{i_episode}, {self.steps_done}, {val}\n')
+
+            if i_episode % self.num_episodes_per_save == 0:
+                print(f'Saving target to disk at episode {i_episode}')
+                self.save_model(self.target_net, f'ep_{i_episode:07}_')
+
+
+    def get_state_from(self, screens):
+        # screen dimension is (CHW) with C=1
+        # concatenate all screens in the 0 dimension (channel)
+        state = torch.cat(list(screens), 0)
+        # add batch dimension to make the output state (BCHW)
+        state = state.unsqueeze(0)
+        return state.to(device)
+
 
 
     def preprocess_screen(self, screen):
+        screen = np.ascontiguousarray(screen, dtype=np.float32)
         screen = cv2.cvtColor(cv2.resize(screen, (84, 110)), cv2.COLOR_BGR2GRAY)
+        # do not include top 26 pixels of screen which contains only score
         screen = screen[26:110,:]
+        # convert to binary image 0 or 255 with threshold 1
         ret, screen = cv2.threshold(screen,1,255,cv2.THRESH_BINARY)
         screen = torch.from_numpy(screen)
-        screen = screen.unsqueeze(2)
-
-        return screen
+        # output screen dimension: (CHW)
+        screen = screen.unsqueeze(0)
+        return screen.to(device)
 
 
     def optimize_model(self):
-        if len(self.memory) < self.BATCH_SIZE:
+        if len(self.replay_memory) < self.BATCH_SIZE:
             return
-        transitions = self.memory.sample(self.BATCH_SIZE)
-        # Transpose the batch (see https://stackoverflow.com/a/19343/3343043 for
-        # detailed explanation). This converts batch-array of Transitions
-        # to Transition of batch-arrays.
+        transitions = self.replay_buffer(self.BATCH_SIZE)
+        # batch dimension: BCHW
         batch = Transition(*zip(*transitions))
 
         # Compute a mask of non-final states and concatenate the batch elements
@@ -204,6 +217,7 @@ class Agent_DQN(Agent):
         non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
                                               batch.next_state)), device=device, dtype=torch.bool)
         non_final_next_states = torch.cat([s for s in batch.next_state if s is not None])
+        # state_batch dim: BCHW
         state_batch = torch.cat(batch.state)
         action_batch = torch.cat(batch.action)
         reward_batch = torch.cat(batch.reward)
@@ -229,6 +243,17 @@ class Agent_DQN(Agent):
         # Optimize the model
         self.optimizer.zero_grad()
         loss.backward()
-        for param in self.self.policy_net.parameters():
+        for param in self.policy_net.parameters():
             param.grad.data.clamp_(-1, 1)
         self.optimizer.step()
+
+
+    def save_model(self, net, prefix):
+        torch.save(net.state_dict(), self.save_path + "/" + prefix + "model.pth")
+        # with open(self.save_path + "/" + prefix + 'avg_rewards.data', 'wb') as file_handle:
+        #     # store the data as binary data stream
+        #     pickle.dump(self.episode_rewards[], file_handle)
+
+
+    def load_model(self, dqn):
+        return dqn.load_state_dict(torch.load(self.model_path))

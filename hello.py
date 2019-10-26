@@ -332,7 +332,7 @@ for i_episode in range(num_episodes):
         # Select and perform an action
         action = select_action(state)
         state_next, reward, done, _ = env.step(action.item())
-        print(state_next.shape)
+        # print(state_next.shape)
         reward = torch.tensor([reward], device=device)
 
         # Observe new state

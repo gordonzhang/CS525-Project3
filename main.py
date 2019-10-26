@@ -1,6 +1,7 @@
 import argparse
 from test import test
 from environment import Environment
+import gym
 
 
 def parse():
@@ -20,7 +21,8 @@ def parse():
 def run(args):
     if args.train_dqn:
         env_name = args.env_name or 'BreakoutNoFrameskip-v4'
-        env = Environment(env_name, args, atari_wrapper=True)
+        # env = Environment(env_name, args, atari_wrapper=True)
+        env = gym.make(env_name)
         from agent_dqn import Agent_DQN
         agent = Agent_DQN(env, args)
         agent.train()
